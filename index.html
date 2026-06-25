@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股策略掃描器 · 盤前選股 + 盤中盯盤</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0F18; --surface:#18202E; --surface2:#0f1623; --border:#2A3445;
+    --text:#E7ECF3; --muted:#8B95A7; --up:#FF5260; --down:#1ECE8A;
+    --accent:#F4B53F; --blue:#4D7CFE; --violet:#9B7BFF; --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1100px 560px at 82% -12%,#1a253810,#0B0F18),var(--bg);
+    color:var(--text);font-family:"Noto Sans TC",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+  .num{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  .up{color:var(--up)}.down{color:var(--down)}
+  header.bar{position:sticky;top:0;z-index:20;backdrop-filter:blur(12px);background:rgba(11,15,24,.82);
+    border-bottom:1px solid var(--border);padding:14px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:18px;letter-spacing:.5px}
+  .brand .dot{width:12px;height:12px;border-radius:3px;background:linear-gradient(135deg,var(--accent),var(--up));box-shadow:0 0 16px var(--accent)}
+  .brand small{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+  .badge{margin-left:auto;font-size:12px;color:var(--down);border:1px solid var(--down);border-radius:999px;padding:4px 11px}
+  main{max-width:1180px;margin:0 auto;padding:22px}
+  .lead{color:var(--muted);font-size:13.5px;line-height:1.7;margin-bottom:18px}
+  .lead b{color:var(--text);font-weight:500}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+  button.act{cursor:pointer;border:1px solid var(--accent);background:linear-gradient(180deg,#23314a,#1a2334);
+    color:var(--text);padding:10px 16px;border-radius:10px;font-size:14px;font-weight:500;font-family:inherit;transition:.15s}
+  button.act:hover{box-shadow:0 0 0 1px var(--accent),0 6px 20px #f4b53f22}
+  button.ghost{border-color:var(--border);background:var(--surface)}
+  input.fld{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:9px;
+    padding:9px 12px;font-size:13px;font-family:"JetBrains Mono",monospace;outline:none}
+  input.fld:focus{border-color:var(--accent)}
+  .hint{color:var(--muted);font-size:12px}
+
+  .sec-title{display:flex;align-items:baseline;gap:11px;margin:26px 0 14px}
+  .sec-title .eye{font-size:11px;letter-spacing:2.5px;color:var(--accent);text-transform:uppercase;font-weight:500}
+  .sec-title h2{font-size:17px;font-weight:700}
+  .sec-title .meta{margin-left:auto;color:var(--muted);font-size:12.5px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}
+  .card[data-fired="true"]::before{background:var(--up)}
+  .card .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .card .ic{font-size:22px}
+  .card .nm{font-weight:700;font-size:16px}
+  .card .nm small{color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:12px;margin-left:7px;font-weight:400}
+  .card .strat{margin-left:auto;font-size:11.5px;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:2px 8px}
+  .card .kind{font-size:11.5px;color:var(--muted)}
+  .card .note{font-size:12.5px;color:var(--muted);margin:9px 0 12px;line-height:1.55}
+  .levels{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .lv{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 11px;font-size:12px}
+  .lv .k{color:var(--muted)}.lv .v{font-weight:600;margin-top:2px}
+  .checks{border-top:1px dashed var(--border);padding-top:11px;display:none}
+  .checks.show{display:block}
+  .chk{display:flex;gap:8px;align-items:baseline;font-size:13px;padding:3px 0}
+  .chk .mk{font-weight:700}.chk .ok{color:var(--down)}.chk .no{color:var(--muted)}
+  .chk .d{color:var(--muted);margin-left:auto;font-size:12px;font-family:"JetBrains Mono",monospace}
+  .alert{margin-top:11px;background:#1a1014;border:1px solid var(--up);border-radius:10px;padding:11px 13px;
+    font-size:13px;line-height:1.7;display:none}
+  .alert.show{display:block}
+  .alert .h{font-weight:700;color:var(--up);margin-bottom:3px}
+  .empty{color:var(--muted);font-size:13px;padding:18px;border:1px dashed var(--border);border-radius:12px;text-align:center}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:28px;line-height:1.8}
+  @media(max-width:560px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="dot"></span>台股策略掃描器<small>SCAN · MONITOR · ALERT</small></div>
+  <span class="badge">純瀏覽器執行 · 免裝 Python</span>
+</header>
+<main>
+  <p class="lead">
+    這頁把「<b>盤前選股 → 盤中每輪比對 → 條件全到齊才示警</b>」的邏輯放進瀏覽器，全部在你電腦本機算，<b>不用安裝任何東西</b>。
+    三個策略：⚡ 波動率擠壓、🔄 超跌反彈、📈 AD 背離。預設用示範資料；填入 FinMind token 可改抓真實日線。
+  </p>
+
+  <div class="toolbar">
+    <button class="act" id="btnScan">▶ 盤前選股（示範資料）</button>
+    <button class="act ghost" id="btnMonitor">⏱ 模擬盤中比對</button>
+    <span style="width:1px;height:24px;background:var(--border)"></span>
+    <input class="fld" id="token" type="password" placeholder="FinMind token（選填）" style="width:200px">
+    <input class="fld" id="ids" placeholder="股號 例 2330,2454,2603" style="width:210px">
+    <button class="act ghost" id="btnFinmind">用 FinMind 抓真實資料</button>
+  </div>
+  <div class="hint" id="status"></div>
+
+  <div class="sec-title"><span class="eye">盤前 08:00</span><h2>今日觀察清單</h2><span class="meta" id="scanMeta"></span></div>
+  <div class="cards" id="watchlist"></div>
+</main>
+<footer>
+  示範與教學用途，數據為模擬或延遲資料，<b>非投資建議</b>。門檻參數務必先做全市場回測（計入手續費 0.1425%、賣出稅 0.3%）再使用。<br>
+  要真正「自動盯盤、訊號到就發 Telegram」，瀏覽器只在開著時會跑——背景自動化見下方說明。
+</footer>
+<script>
+/* 台股盤前選股 + 盤中盯盤邏輯（純 JS，可在瀏覽器或 node 執行，免裝 Python）
+   bars: [{date,open,high,low,close,volume(張)}], 依日期升冪 */
+
+// ---------- 技術指標 ----------
+function sma(a, n, i) { if (i < n - 1) return null; let s = 0; for (let j = i - n + 1; j <= i; j++) s += a[j]; return s / n; }
+function stdev(a, n, i) { const m = sma(a, n, i); if (m == null) return null; let s = 0; for (let j = i - n + 1; j <= i; j++) s += (a[j] - m) ** 2; return Math.sqrt(s / n); }
+
+function bollinger(closes, n = 20, k = 2) {
+  const up = [], mid = [], lo = [], bw = [];
+  for (let i = 0; i < closes.length; i++) {
+    const m = sma(closes, n, i), sd = stdev(closes, n, i);
+    if (m == null) { up.push(null); mid.push(null); lo.push(null); bw.push(null); continue; }
+    up.push(m + k * sd); mid.push(m); lo.push(m - k * sd); bw.push((2 * k * sd) / m);
+  }
+  return { up, mid, lo, bw };
+}
+
+function stochKD(bars, n = 9) {              // 台股 9 日 KD
+  const K = [], D = [];
+  let k = 50, d = 50;
+  for (let i = 0; i < bars.length; i++) {
+    let rsv = 50;
+    if (i >= n - 1) {
+      let hi = -Infinity, low = Infinity;
+      for (let j = i - n + 1; j <= i; j++) { hi = Math.max(hi, bars[j].high); low = Math.min(low, bars[j].low); }
+      rsv = hi === low ? 50 : (bars[i].close - low) / (hi - low) * 100;
+    }
+    k = 2 / 3 * k + 1 / 3 * rsv; d = 2 / 3 * d + 1 / 3 * k;
+    K.push(k); D.push(d);
+  }
+  return { K, D };
+}
+
+function rsi(closes, n = 14) {
+  const out = [50];
+  let ag = 0, al = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const ch = closes[i] - closes[i - 1];
+    const g = Math.max(ch, 0), l = Math.max(-ch, 0);
+    if (i <= n) { ag += g / n; al += l / n; } else { ag = (ag * (n - 1) + g) / n; al = (al * (n - 1) + l) / n; }
+    out.push(al === 0 ? 100 : 100 - 100 / (1 + ag / al));
+  }
+  return out;
+}
+
+function adLine(bars) {
+  const out = []; let cum = 0;
+  for (const b of bars) {
+    const rng = b.high - b.low;
+    const mfm = rng === 0 ? 0 : ((b.close - b.low) - (b.high - b.close)) / rng;
+    cum += mfm * b.volume; out.push(cum);
+  }
+  return out;
+}
+
+function quantile(arr, q) {
+  const s = [...arr].filter(v => v != null).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const pos = (s.length - 1) * q, base = Math.floor(pos), rest = pos - base;
+  return s[base + 1] !== undefined ? s[base] + rest * (s[base + 1] - s[base]) : s[base];
+}
+
+function withLiveBar(bars, snap) {           // 把盤中快照接成今天這根 K
+  return [...bars, {
+    date: "live", open: snap.open,
+    high: snap.high ?? Math.max(snap.open, snap.price),
+    low: snap.low ?? Math.min(snap.open, snap.price),
+    close: snap.price, volume: snap.volume,
+  }];
+}
+
+// ---------- 三個策略：scan(盤前) + check(盤中) ----------
+const Strategies = {
+  squeeze: {
+    name: "波動率擠壓", icon: "⚡", kind: "順勢突破",
+    P: { BW_PCTL: 0.20, BW_LOOKBACK: 120, MIN_AVG_VOL: 1500, VOL_MULT: 1.5, MOM_N: 5 },
+    scan(bars) {
+      const P = this.P; if (bars.length < P.BW_LOOKBACK) return null;
+      const closes = bars.map(b => b.close);
+      const { up, bw } = bollinger(closes);
+      const i = bars.length - 1;
+      const avgVol = sma(bars.map(b => b.volume), 20, i);
+      const bwToday = bw[i], floor = quantile(bw.slice(-P.BW_LOOKBACK), P.BW_PCTL);
+      if (bwToday == null || bwToday > floor) return null;
+      if (avgVol < P.MIN_AVG_VOL) return null;
+      return {
+        levels: { breakout_price: +up[i].toFixed(2), vol_threshold: Math.round(avgVol * P.VOL_MULT) },
+        note: `帶寬 ${bwToday.toFixed(3)} ≤ ${floor.toFixed(3)}（近${P.BW_LOOKBACK}日${P.BW_PCTL*100|0}分位）擠壓待變盤`,
+      };
+    },
+    check(bars, snap, lv) {
+      const live = withLiveBar(bars, snap), c = live.map(b => b.close);
+      const mom = c[c.length - 1] - c[c.length - 1 - this.P.MOM_N];
+      return [
+        ["突破上軌", snap.price >= lv.breakout_price, `現 ${snap.price} vs 上軌 ${lv.breakout_price}`],
+        ["量能達標", snap.volume >= lv.vol_threshold, `量 ${snap.volume.toLocaleString()} vs ${lv.vol_threshold.toLocaleString()} 張`],
+        [`${this.P.MOM_N}日動量轉正`, mom > 0, `動量 ${mom >= 0 ? "+" : ""}${mom.toFixed(2)}`],
+      ];
+    },
+  },
+
+  oversold: {
+    name: "超跌反彈", icon: "🔄", kind: "逆勢",
+    P: { LOW_LOOKBACK: 20, NEAR_LOW_PCT: 0.03, KD_OVERSOLD: 20, VOL_SHRINK: 0.8 },
+    scan(bars) {
+      const P = this.P; if (bars.length < P.LOW_LOOKBACK + 5) return null;
+      const i = bars.length - 1;
+      const low20 = Math.min(...bars.slice(-P.LOW_LOOKBACK).map(b => b.low));
+      const { K } = stochKD(bars);
+      const close = bars[i].close;
+      if (!(close <= low20 * (1 + P.NEAR_LOW_PCT) && K[i] < P.KD_OVERSOLD)) return null;
+      const avgVol5 = sma(bars.map(b => b.volume), 5, i);
+      return {
+        levels: { vol_shrink_threshold: Math.round(avgVol5 * P.VOL_SHRINK) },
+        note: `距20日低 ${low20.toFixed(2)} 僅 ${((close / low20 - 1) * 100).toFixed(1)}%、K=${K[i].toFixed(1)} 超賣`,
+      };
+    },
+    check(bars, snap, lv) {
+      const { K } = stochKD(withLiveBar(bars, snap));
+      return [
+        ["紅K止穩", snap.price > snap.open, `現 ${snap.price} vs 開 ${snap.open}`],
+        ["量縮（賣壓衰竭）", snap.volume <= lv.vol_shrink_threshold, `量 ${snap.volume.toLocaleString()} ≤ ${lv.vol_shrink_threshold.toLocaleString()} 張`],
+        ["KD 仍超賣", K[K.length - 1] < this.P.KD_OVERSOLD, `K=${K[K.length - 1].toFixed(1)}`],
+      ];
+    },
+  },
+
+  divergence: {
+    name: "AD背離", icon: "📈", kind: "量價",
+    P: { LOW_LOOKBACK: 20, RSI_N: 14 },
+    scan(bars) {
+      const P = this.P; if (bars.length < P.LOW_LOOKBACK + P.RSI_N + 5) return null;
+      const i = bars.length - 1;
+      const ad = adLine(bars), r = rsi(bars.map(b => b.close), P.RSI_N);
+      const win = bars.slice(-P.LOW_LOOKBACK);
+      const prevCloses = win.slice(0, -1).map(b => b.close);
+      const priceLowerLow = win[win.length - 1].close <= Math.min(...prevCloses);
+      const adHigher = ad[i] > Math.min(...ad.slice(-P.LOW_LOOKBACK, -1));
+      let pIdx = 0, pmin = Infinity;
+      win.slice(0, -1).forEach((b, k) => { if (b.close < pmin) { pmin = b.close; pIdx = bars.length - P.LOW_LOOKBACK + k; } });
+      const rsiHigherLow = r[i] > r[pIdx];
+      if (!(priceLowerLow && adHigher && rsiHigherLow)) return null;
+      return {
+        levels: { low20: +Math.min(...win.map(b => b.close)).toFixed(2), rsi_ref: +r[pIdx].toFixed(1) },
+        note: `價破低但 AD 墊高、RSI ${r[pIdx].toFixed(1)}→${r[i].toFixed(1)} 動能轉弱`,
+      };
+    },
+    check(bars, snap, lv) {
+      const r = rsi(withLiveBar(bars, snap).map(b => b.close), this.P.RSI_N);
+      return [
+        ["創20日新低", snap.price <= lv.low20, `現 ${snap.price} vs 低 ${lv.low20}`],
+        ["RSI 背離（動能轉弱）", r[r.length - 1] > lv.rsi_ref, `RSI ${r[r.length - 1].toFixed(1)} > 前低 ${lv.rsi_ref}`],
+      ];
+    },
+  },
+};
+
+// ---------- 盤前掃描整個 universe ----------
+function morningScan(universe) {             // universe: {stockId:{name,bars}}
+  const watch = [];
+  for (const [sid, { name, bars }] of Object.entries(universe)) {
+    for (const key of Object.keys(Strategies)) {
+      const cond = Strategies[key].scan(bars);
+      if (cond) watch.push({ stock_id: sid, name, strategy: key, ...cond });
+    }
+  }
+  return watch;
+}
+
+// ---------- 示範資料產生器 ----------
+function rngFactory(seed) { return () => (seed = (seed * 9301 + 49297) % 233280) / 233280; }
+function toBars(closes, vols) {
+  return closes.map((c, i) => ({
+    date: i, open: c - 0.2, high: c + 0.3, low: c - 0.3, close: +c.toFixed(2), volume: vols[i],
+  }));
+}
+function makeSqueeze(seed) {                  // 收斂擠壓
+  const r = rngFactory(seed); let p = 100; const c = [], v = [];
+  for (let i = 0; i < 160; i++) {
+    const k = i < 110 ? 0.9 : 0.6 * (1 - (i - 110) / 50) + 0.04;
+    p += (r() - 0.5) * 2 * k; c.push(p); v.push(Math.round(1800 + r() * 1200));
+  }
+  return toBars(c, v);
+}
+function makeOversold(seed) {                 // 跌深超賣：持續探底到最後一根
+  const r = rngFactory(seed); let p = 100; const c = [], v = [];
+  for (let i = 0; i < 60; i++) {
+    p = Math.max(20, p - 0.7 + (r() - 0.5) * 0.5); c.push(p); v.push(Math.round(1500 + r() * 1500));
+  }
+  return toBars(c, v);
+}
+function makeDivergence(seed) {               // 價破低但 RSI/AD 背離（兩低點壓在 20 日內）
+  const r = rngFactory(seed); const bars = [];
+  const push = (o, h, l, cl, vol) => bars.push({
+    date: bars.length, open: +o.toFixed(2), high: +h.toFixed(2), low: +l.toFixed(2), close: +cl.toFixed(2), volume: Math.round(vol),
+  });
+  let p = 100;
+  for (let i = 0; i < 50; i++) { const np = p + (r() - 0.5) * 0.5; push(p, Math.max(p, np) + 0.25, Math.min(p, np) - 0.25, np, 2000 + r() * 600); p = np; }
+  for (let i = 0; i < 8; i++) { const o = p, cl = p - 1.0; push(o, o + 0.2, cl - 0.2, cl, 3500 + r() * 800); p = cl; }   // 急殺低點、收近低、量大
+  const firstLow = p;
+  for (let i = 0; i < 3; i++) { const o = p, cl = p + 0.7; push(o, cl + 0.2, o - 0.2, cl, 2200 + r() * 500); p = cl; }   // 反彈
+  for (let i = 0; i < 9; i++) { const o = p - 0.38, cl = o + 0.2; push(o, cl + 0.05, o - 0.1, cl, 1400 + r() * 300); p = cl; } // 緩跌、收近高、量縮
+  { const o = p - 1.05, cl = o + 0.2; push(o, cl + 0.05, o - 0.1, cl, 1400 + r() * 300); }                              // 最後一根才破前低
+  return bars;
+}
+function makeRandom(seed) {                   // 無訊號雜訊股
+  const r = rngFactory(seed); let p = 100; const c = [], v = [];
+  for (let i = 0; i < 160; i++) { p += (r() - 0.5) * 2; c.push(p); v.push(Math.round(1500 + r() * 2000)); }
+  return toBars(c, v);
+}
+
+function demoUniverse() {
+  return {
+    "2330": { name: "台積電", bars: makeSqueeze(11) },
+    "2454": { name: "聯發科", bars: makeSqueeze(29) },
+    "2603": { name: "長榮", bars: makeOversold(41) },
+    "2609": { name: "陽明", bars: makeOversold(57) },
+    "3008": { name: "大立光", bars: makeDivergence(69) },
+    "2317": { name: "鴻海", bars: makeRandom(83) },
+    "2308": { name: "台達電", bars: makeRandom(97) },
+  };
+}
+
+// ===================== DOM 互動層 =====================
+const $ = s => document.querySelector(s);
+let UNI = null, WATCH = [];
+
+const LBL = { breakout_price: "突破上軌價", vol_threshold: "量門檻(張)", vol_shrink_threshold: "量縮門檻(張)", low20: "20日低", rsi_ref: "前低RSI" };
+const labelOf = k => LBL[k] || k;
+const fmtLv = (k, v) => k.includes("vol") ? Math.round(v).toLocaleString() : v;
+
+function renderWatch() {
+  const el = $("#watchlist");
+  if (!WATCH.length) { el.innerHTML = '<div class="empty">目前沒有符合條件的個股。換資料或調整參數再試。</div>'; $("#scanMeta").textContent = ""; return; }
+  $("#scanMeta").textContent = `共 ${WATCH.length} 檔入選`;
+  el.innerHTML = WATCH.map((w, idx) => {
+    const S = Strategies[w.strategy];
+    const lv = Object.entries(w.levels).map(([k, v]) =>
+      `<div class="lv"><div class="k">${labelOf(k)}</div><div class="v num">${fmtLv(k, v)}</div></div>`).join("");
+    return `<div class="card" data-idx="${idx}" data-fired="false">
+      <div class="top"><span class="ic">${S.icon}</span>
+        <span class="nm">${w.name}<small>${w.stock_id}</small></span>
+        <span class="strat">${S.name}</span></div>
+      <div class="kind">${S.kind}策略</div>
+      <div class="note">${w.note}</div>
+      <div class="levels">${lv}</div>
+      <div class="checks" id="chk-${idx}"></div>
+      <div class="alert" id="al-${idx}"></div>
+    </div>`;
+  }).join("");
+}
+
+function runScan(uni, label) { UNI = uni; WATCH = morningScan(uni); renderWatch(); $("#status").textContent = label; }
+
+// 盤中模擬：對每檔造一個「條件到齊」的快照（示範用）
+function simSnapshot(w) {
+  const bars = UNI[w.stock_id].bars, last = bars[bars.length - 1].close, lv = w.levels;
+  if (w.strategy === "squeeze") return { stock_id: w.stock_id, open: +(last - 1).toFixed(2), price: +(lv.breakout_price + 2).toFixed(2), volume: lv.vol_threshold + 800 };
+  if (w.strategy === "oversold") return { stock_id: w.stock_id, open: +(last - 1).toFixed(2), price: +(last + 1).toFixed(2), volume: Math.max(0, lv.vol_shrink_threshold - 300) };
+  return { stock_id: w.stock_id, open: +(lv.low20 + 1).toFixed(2), price: +(lv.low20 - 0.5).toFixed(2), volume: 1500 };
+}
+
+function runMonitor() {
+  if (!WATCH.length) return;
+  WATCH.forEach((w, idx) => {
+    const S = Strategies[w.strategy];
+    const snap = simSnapshot(w);
+    const res = S.check(UNI[w.stock_id].bars, snap, w.levels);
+    const fired = res.every(c => c[1]);
+    const chk = $("#chk-" + idx); chk.classList.add("show");
+    chk.innerHTML = res.map(([n, ok, d]) =>
+      `<div class="chk"><span class="mk ${ok ? 'ok' : 'no'}">${ok ? '✓' : '○'}</span><span>${n}</span><span class="d">${d}</span></div>`).join("");
+    const card = document.querySelector(`.card[data-idx="${idx}"]`);
+    card.dataset.fired = fired;
+    const al = $("#al-" + idx);
+    if (fired) {
+      al.classList.add("show");
+      al.innerHTML = `<div class="h">🔔 ${w.stock_id} ${w.name}【${S.name}】條件到齊</div>
+        現價 ${snap.price} ・ 量 ${snap.volume.toLocaleString()} 張<br>${res.map(c => "✓ " + c[0]).join(" ・ ")}`;
+    } else { al.classList.remove("show"); al.innerHTML = ""; }
+  });
+  $("#status").textContent = "盤中比對完成：條件全到齊者亮紅燈並產生 Telegram 訊息；接近未到齊的實務上只進 log，不通知（避免洗版）。";
+}
+
+// FinMind 真實日線
+async function fetchFinmind() {
+  const token = $("#token").value.trim();
+  const ids = $("#ids").value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  if (!ids.length) { $("#status").textContent = "請先輸入股號，例如 2330,2454,2603"; return; }
+  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 320);
+  const fmt = d => d.toISOString().slice(0, 10);
+  $("#status").textContent = "抓取中…（FinMind 免費額度 600 次/小時）";
+  const uni = {};
+  try {
+    for (const id of ids) {
+      const u = new URL("https://api.finmindtrade.com/api/v4/data");
+      u.searchParams.set("dataset", "TaiwanStockPrice");
+      u.searchParams.set("data_id", id);
+      u.searchParams.set("start_date", fmt(start));
+      u.searchParams.set("end_date", fmt(end));
+      if (token) u.searchParams.set("token", token);
+      const r = await fetch(u); const j = await r.json();
+      if (!j.data || !j.data.length) continue;
+      const bars = j.data.map(d => ({ date: d.date, open: d.open, high: d.max, low: d.min, close: d.close, volume: d.Trading_Volume / 1000 }));
+      uni[id] = { name: id, bars };
+    }
+    if (!Object.keys(uni).length) { $("#status").textContent = "沒抓到資料，請確認股號與額度。"; return; }
+    runScan(uni, `已用 FinMind 抓 ${Object.keys(uni).length} 檔真實日線。按「模擬盤中比對」看觸發。`);
+  } catch (e) {
+    $("#status").innerHTML = "瀏覽器直接打 FinMind 被擋（多半是 CORS）。可改用示範資料，或透過你自己的後端（FastAPI / Render）代理轉發後回傳給前端。";
+  }
+}
+
+$("#btnScan").onclick = () => runScan(demoUniverse(), "已載入示範資料並完成盤前選股。");
+$("#btnMonitor").onclick = runMonitor;
+$("#btnFinmind").onclick = fetchFinmind;
+runScan(demoUniverse(), "已載入示範資料並完成盤前選股。按「模擬盤中比對」看訊號觸發。");
+</script>
+</body>
+</html>
