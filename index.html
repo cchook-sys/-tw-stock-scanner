@@ -1,106 +1,21 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>台股策略掃描器 · 盤前選股 + 盤中盯盤</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#0B0F18; --surface:#18202E; --surface2:#0f1623; --border:#2A3445;
-    --text:#E7ECF3; --muted:#8B95A7; --up:#FF5260; --down:#1ECE8A;
-    --accent:#F4B53F; --blue:#4D7CFE; --violet:#9B7BFF; --r:14px;
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:radial-gradient(1100px 560px at 82% -12%,#1a253810,#0B0F18),var(--bg);
-    color:var(--text);font-family:"Noto Sans TC",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
-  .num{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
-  .up{color:var(--up)}.down{color:var(--down)}
-  header.bar{position:sticky;top:0;z-index:20;backdrop-filter:blur(12px);background:rgba(11,15,24,.82);
-    border-bottom:1px solid var(--border);padding:14px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-  .brand{display:flex;align-items:center;gap:11px;font-weight:900;font-size:18px;letter-spacing:.5px}
-  .brand .dot{width:12px;height:12px;border-radius:3px;background:linear-gradient(135deg,var(--accent),var(--up));box-shadow:0 0 16px var(--accent)}
-  .brand small{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
-  .badge{margin-left:auto;font-size:12px;color:var(--down);border:1px solid var(--down);border-radius:999px;padding:4px 11px}
-  main{max-width:1180px;margin:0 auto;padding:22px}
-  .lead{color:var(--muted);font-size:13.5px;line-height:1.7;margin-bottom:18px}
-  .lead b{color:var(--text);font-weight:500}
+// ============================================================
+// 台股全市場 AI Agent（Google Apps Script · 免 Python）
+// 每天自動：抓全市場日線 → 四策略選股 → 存結果 → 發 Telegram
+// 作法參考「盤前選股 → 條件到齊才通知」的 agent 架構
+// ============================================================
 
-  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
-  button.act{cursor:pointer;border:1px solid var(--accent);background:linear-gradient(180deg,#23314a,#1a2334);
-    color:var(--text);padding:10px 16px;border-radius:10px;font-size:14px;font-weight:500;font-family:inherit;transition:.15s}
-  button.act:hover{box-shadow:0 0 0 1px var(--accent),0 6px 20px #f4b53f22}
-  button.ghost{border-color:var(--border);background:var(--surface)}
-  input.fld{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:9px;
-    padding:9px 12px;font-size:13px;font-family:"JetBrains Mono",monospace;outline:none}
-  input.fld:focus{border-color:var(--accent)}
-  .hint{color:var(--muted);font-size:12px}
+// ===== ① 設定區：把這三個值填好（其餘可不動）=====
+const FINMIND_TOKEN      = '貼上你的_FinMind_token';
+const TELEGRAM_BOT_TOKEN = '貼上你的_Telegram_Bot_token';
+const TELEGRAM_CHAT_ID   = '貼上你的_chat_id';
 
-  .sec-title{display:flex;align-items:baseline;gap:11px;margin:26px 0 14px}
-  .sec-title .eye{font-size:11px;letter-spacing:2.5px;color:var(--accent);text-transform:uppercase;font-weight:500}
-  .sec-title h2{font-size:17px;font-weight:700}
-  .sec-title .meta{margin-left:auto;color:var(--muted);font-size:12.5px}
+// ===== 參數（要調再調）=====
+const HISTORY_WEEKDAYS = 170;   // 往回抓幾個工作日（扣掉假日約 150 個交易日）
+const MIN_BARS         = 140;   // 資料不足此天數的股票略過（布林120/MA60 需要）
+const MIN_AVG_VOL      = 500;   // 流動性：20日均量(張)低於此略過，濾掉冷門股
+const FETCH_CHUNK      = 25;    // fetchAll 每批請求數
+const FINMIND_URL      = 'https://api.finmindtrade.com/api/v4/data';
 
-  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;position:relative;overflow:hidden}
-  .card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}
-  .card[data-fired="true"]::before{background:var(--up)}
-  .card .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-  .card .ic{font-size:22px}
-  .card .nm{font-weight:700;font-size:16px}
-  .card .nm small{color:var(--muted);font-family:"JetBrains Mono",monospace;font-size:12px;margin-left:7px;font-weight:400}
-  .card .strat{margin-left:auto;font-size:11.5px;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:2px 8px}
-  .card .kind{font-size:11.5px;color:var(--muted)}
-  .card .note{font-size:12.5px;color:var(--muted);margin:9px 0 12px;line-height:1.55}
-  .levels{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-  .lv{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:7px 11px;font-size:12px}
-  .lv .k{color:var(--muted)}.lv .v{font-weight:600;margin-top:2px}
-  .checks{border-top:1px dashed var(--border);padding-top:11px;display:none}
-  .checks.show{display:block}
-  .chk{display:flex;gap:8px;align-items:baseline;font-size:13px;padding:3px 0}
-  .chk .mk{font-weight:700}.chk .ok{color:var(--down)}.chk .no{color:var(--muted)}
-  .chk .d{color:var(--muted);margin-left:auto;font-size:12px;font-family:"JetBrains Mono",monospace}
-  .alert{margin-top:11px;background:#1a1014;border:1px solid var(--up);border-radius:10px;padding:11px 13px;
-    font-size:13px;line-height:1.7;display:none}
-  .alert.show{display:block}
-  .alert .h{font-weight:700;color:var(--up);margin-bottom:3px}
-  .empty{color:var(--muted);font-size:13px;padding:18px;border:1px dashed var(--border);border-radius:12px;text-align:center}
-  footer{color:var(--muted);font-size:12px;text-align:center;padding:28px;line-height:1.8}
-  @media(max-width:560px){.cards{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<header class="bar">
-  <div class="brand"><span class="dot"></span>台股策略掃描器<small>SCAN · MONITOR · ALERT</small></div>
-  <span class="badge">純瀏覽器執行 · 免裝 Python</span>
-</header>
-<main>
-  <p class="lead">
-    這頁把「<b>盤前選股 → 盤中每輪比對 → 條件全到齊才示警</b>」的邏輯放進瀏覽器，全部在你電腦本機算，<b>不用安裝任何東西</b>。
-    三個策略不夠？這版有四個：⚡ 波動率擠壓、🚀 強勢趨勢、🔄 超跌反彈、📈 AD 背離（前者順勢，後二逆勢）。預設用示範資料；填入 FinMind token 可改抓真實日線。
-  </p>
-
-  <div class="toolbar">
-    <button class="act" id="btnScan">▶ 盤前選股（示範資料）</button>
-    <button class="act ghost" id="btnMonitor">⏱ 模擬盤中比對</button>
-    <span style="width:1px;height:24px;background:var(--border)"></span>
-    <input class="fld" id="token" type="password" placeholder="FinMind token（選填）" style="width:200px">
-    <input class="fld" id="ids" placeholder="股號 例 2330,2454,2603" style="width:210px">
-    <button class="act ghost" id="btnFinmind">抓指定股號</button>
-    <button class="act" id="btnBasket">📡 掃描熱門股（真實）</button>
-  </div>
-  <div class="hint" id="status"></div>
-
-  <div class="sec-title"><span class="eye">盤前 08:00</span><h2>今日觀察清單</h2><span class="meta" id="scanMeta"></span></div>
-  <div class="cards" id="watchlist"></div>
-</main>
-<footer>
-  示範與教學用途，數據為模擬或延遲資料，<b>非投資建議</b>。門檻參數務必先做全市場回測（計入手續費 0.1425%、賣出稅 0.3%）再使用。<br>
-  要真正「自動盯盤、訊號到就發 Telegram」，瀏覽器只在開著時會跑——背景自動化見下方說明。
-</footer>
-<script>
 /* 台股盤前選股 + 盤中盯盤邏輯（純 JS，可在瀏覽器或 node 執行，免裝 Python）
    bars: [{date,open,high,low,close,volume(張)}], 依日期升冪 */
 
@@ -303,193 +218,133 @@ function morningScan(universe) {             // universe: {stockId:{name,bars}}
   return watch;
 }
 
-// ---------- 示範資料產生器 ----------
-function rngFactory(seed) { return () => (seed = (seed * 9301 + 49297) % 233280) / 233280; }
-function toBars(closes, vols) {
-  return closes.map((c, i) => ({
-    date: i, open: c - 0.2, high: c + 0.3, low: c - 0.3, close: +c.toFixed(2), volume: vols[i],
-  }));
-}
-function makeSqueeze(seed) {                  // 收斂擠壓
-  const r = rngFactory(seed); let p = 100; const c = [], v = [];
-  for (let i = 0; i < 160; i++) {
-    const k = i < 110 ? 0.9 : 0.6 * (1 - (i - 110) / 50) + 0.04;
-    p += (r() - 0.5) * 2 * k; c.push(p); v.push(Math.round(1800 + r() * 1200));
+// ============================================================
+// ③ FinMind 全市場抓取
+// ============================================================
+function recentWeekdays_(n) {                 // 往回取 n 個工作日（升冪），假日由 API 回空自動略過
+  const out = []; const d = new Date();
+  while (out.length < n) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) out.push(Utilities.formatDate(d, 'Asia/Taipei', 'yyyy-MM-dd'));
+    d.setDate(d.getDate() - 1);
   }
-  return toBars(c, v);
+  return out.reverse();
 }
-function makeOversold(seed) {                 // 跌深超賣：持續探底到最後一根
-  const r = rngFactory(seed); let p = 100; const c = [], v = [];
-  for (let i = 0; i < 60; i++) {
-    p = Math.max(20, p - 0.7 + (r() - 0.5) * 0.5); c.push(p); v.push(Math.round(1500 + r() * 1500));
+
+function fmGet_(params) {                      // 單一請求（給 name map 等用）
+  params.token = FINMIND_TOKEN;
+  const q = Object.keys(params).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
+  const resp = UrlFetchApp.fetch(FINMIND_URL + '?' + q, { muteHttpExceptions: true });
+  try { return JSON.parse(resp.getContentText()).data || []; } catch (e) { return []; }
+}
+
+function fetchNameMap_() {                      // 股號 → 中文名
+  const rows = fmGet_({ dataset: 'TaiwanStockInfo' });
+  const map = {};
+  rows.forEach(r => { map[r.stock_id] = r.stock_name; });
+  return map;
+}
+
+// 對每個日期抓「全市場當日」（TaiwanStockPrice 不帶 data_id），組成 {股號: [bar,...]}
+function fetchWholeMarketByDates_(dates) {
+  const byStock = {};
+  for (let i = 0; i < dates.length; i += FETCH_CHUNK) {
+    const batch = dates.slice(i, i + FETCH_CHUNK).map(d => ({
+      url: FINMIND_URL + '?dataset=TaiwanStockPrice&start_date=' + d + '&token=' + FINMIND_TOKEN,
+      muteHttpExceptions: true,
+    }));
+    let resps;
+    try { resps = UrlFetchApp.fetchAll(batch); } catch (e) { continue; }
+    resps.forEach(resp => {
+      let data; try { data = JSON.parse(resp.getContentText()).data || []; } catch (e) { data = []; }
+      data.forEach(r => {
+        const id = r.stock_id;
+        if (!/^[1-9]\d{3}$/.test(id)) return;     // 只留 4 位數普通股，濾掉 ETF(00xx)/權證
+        (byStock[id] = byStock[id] || []).push({
+          date: r.date, open: r.open, high: r.max, low: r.min, close: r.close,
+          volume: r.Trading_Volume / 1000,         // 股 → 張
+        });
+      });
+    });
+    Utilities.sleep(300);                         // 批次間稍歇，對 API 客氣
   }
-  return toBars(c, v);
+  Object.keys(byStock).forEach(id => byStock[id].sort((a, b) => a.date < b.date ? -1 : 1));
+  return byStock;
 }
-function makeDivergence(seed) {               // 價破低但 RSI/AD 背離（兩低點壓在 20 日內）
-  const r = rngFactory(seed); const bars = [];
-  const push = (o, h, l, cl, vol) => bars.push({
-    date: bars.length, open: +o.toFixed(2), high: +h.toFixed(2), low: +l.toFixed(2), close: +cl.toFixed(2), volume: Math.round(vol),
+
+function buildUniverse_(byStock, nameMap) {     // 過濾資料不足/冷門股，組成選股用 universe
+  const uni = {};
+  Object.keys(byStock).forEach(id => {
+    const bars = byStock[id];
+    if (bars.length < MIN_BARS) return;
+    const last20 = bars.slice(-20);
+    const avgVol = last20.reduce((s, b) => s + b.volume, 0) / last20.length;
+    if (avgVol < MIN_AVG_VOL) return;
+    uni[id] = { name: nameMap[id] || id, bars };
   });
-  let p = 100;
-  for (let i = 0; i < 50; i++) { const np = p + (r() - 0.5) * 0.5; push(p, Math.max(p, np) + 0.25, Math.min(p, np) - 0.25, np, 2000 + r() * 600); p = np; }
-  for (let i = 0; i < 8; i++) { const o = p, cl = p - 1.0; push(o, o + 0.2, cl - 0.2, cl, 3500 + r() * 800); p = cl; }   // 急殺低點、收近低、量大
-  const firstLow = p;
-  for (let i = 0; i < 3; i++) { const o = p, cl = p + 0.7; push(o, cl + 0.2, o - 0.2, cl, 2200 + r() * 500); p = cl; }   // 反彈
-  for (let i = 0; i < 9; i++) { const o = p - 0.38, cl = o + 0.2; push(o, cl + 0.05, o - 0.1, cl, 1400 + r() * 300); p = cl; } // 緩跌、收近高、量縮
-  { const o = p - 1.05, cl = o + 0.2; push(o, cl + 0.05, o - 0.1, cl, 1400 + r() * 300); }                              // 最後一根才破前低
-  return bars;
-}
-function makeRandom(seed) {                   // 無訊號雜訊股
-  const r = rngFactory(seed); let p = 100; const c = [], v = [];
-  for (let i = 0; i < 160; i++) { p += (r() - 0.5) * 2; c.push(p); v.push(Math.round(1500 + r() * 2000)); }
-  return toBars(c, v);
-}
-function makeTrend(seed) {                     // 強勢多頭趨勢、收在近高
-  const r = rngFactory(seed); let p = 100; const c = [], v = [];
-  for (let i = 0; i < 120; i++) { p = p * (1 + 0.004) + (r() - 0.5) * 0.8; c.push(p); v.push(Math.round(2200 + r() * 1600)); }
-  return toBars(c, v);
-}
-
-function demoUniverse() {
-  return {
-    "2330": { name: "台積電", bars: makeSqueeze(11) },
-    "2454": { name: "聯發科", bars: makeSqueeze(29) },
-    "2603": { name: "長榮", bars: makeOversold(41) },
-    "2609": { name: "陽明", bars: makeOversold(57) },
-    "3008": { name: "大立光", bars: makeDivergence(69) },
-    "2382": { name: "廣達", bars: makeTrend(7) },
-    "2345": { name: "智邦", bars: makeTrend(15) },
-    "2317": { name: "鴻海", bars: makeRandom(83) },
-  };
-}
-
-// ===================== DOM 互動層 =====================
-const $ = s => document.querySelector(s);
-let UNI = null, WATCH = [];
-
-const LBL = { breakout_price: "突破上軌價", vol_threshold: "量門檻(張)", vol_shrink_threshold: "量縮門檻(張)", low20: "20日低", rsi_ref: "前低RSI", new_high: "60日高價" };
-const labelOf = k => LBL[k] || k;
-const fmtLv = (k, v) => k.includes("vol") ? Math.round(v).toLocaleString() : v;
-
-function renderWatch() {
-  const el = $("#watchlist");
-  if (!WATCH.length) { el.innerHTML = '<div class="empty">這批股票目前沒有人符合條件——選股策略本來就很挑，通常掃越多檔越容易中，也可能今天就是沒有好的設定。換批股票或改天再掃。</div>'; $("#scanMeta").textContent = ""; return; }
-  $("#scanMeta").textContent = `共 ${WATCH.length} 檔入選`;
-  el.innerHTML = WATCH.map((w, idx) => {
-    const S = Strategies[w.strategy];
-    const lv = Object.entries(w.levels).map(([k, v]) =>
-      `<div class="lv"><div class="k">${labelOf(k)}</div><div class="v num">${fmtLv(k, v)}</div></div>`).join("");
-    return `<div class="card" data-idx="${idx}" data-fired="false">
-      <div class="top"><span class="ic">${S.icon}</span>
-        <span class="nm">${w.name}<small>${w.stock_id}</small></span>
-        <span class="strat">${S.name}</span></div>
-      <div class="kind">${S.kind}策略</div>
-      <div class="note">${w.note}</div>
-      <div class="levels">${lv}</div>
-      <div class="checks" id="chk-${idx}"></div>
-      <div class="alert" id="al-${idx}"></div>
-    </div>`;
-  }).join("");
-}
-
-function runScan(uni, label) { UNI = uni; WATCH = morningScan(uni); renderWatch(); $("#status").textContent = label; }
-
-// 盤中模擬：對每檔造一個「條件到齊」的快照（示範用）
-function simSnapshot(w) {
-  const bars = UNI[w.stock_id].bars, last = bars[bars.length - 1].close, lv = w.levels;
-  if (w.strategy === "squeeze") return { stock_id: w.stock_id, open: +(last - 1).toFixed(2), price: +(lv.breakout_price + 2).toFixed(2), volume: lv.vol_threshold + 800 };
-  if (w.strategy === "oversold") return { stock_id: w.stock_id, open: +(last - 1).toFixed(2), price: +(last + 1).toFixed(2), volume: Math.max(0, lv.vol_shrink_threshold - 300) };
-  return { stock_id: w.stock_id, open: +(lv.low20 + 1).toFixed(2), price: +(lv.low20 - 0.5).toFixed(2), volume: 1500 };
-}
-
-function runMonitor() {
-  if (!WATCH.length) return;
-  WATCH.forEach((w, idx) => {
-    const S = Strategies[w.strategy];
-    const snap = simSnapshot(w);
-    const res = S.check(UNI[w.stock_id].bars, snap, w.levels);
-    const fired = res.every(c => c[1]);
-    const chk = $("#chk-" + idx); chk.classList.add("show");
-    chk.innerHTML = res.map(([n, ok, d]) =>
-      `<div class="chk"><span class="mk ${ok ? 'ok' : 'no'}">${ok ? '✓' : '○'}</span><span>${n}</span><span class="d">${d}</span></div>`).join("");
-    const card = document.querySelector(`.card[data-idx="${idx}"]`);
-    card.dataset.fired = fired;
-    const al = $("#al-" + idx);
-    if (fired) {
-      al.classList.add("show");
-      al.innerHTML = `<div class="h">🔔 ${w.stock_id} ${w.name}【${S.name}】條件到齊</div>
-        現價 ${snap.price} ・ 量 ${snap.volume.toLocaleString()} 張<br>${res.map(c => "✓ " + c[0]).join(" ・ ")}`;
-    } else { al.classList.remove("show"); al.innerHTML = ""; }
-  });
-  $("#status").textContent = "盤中比對完成：條件全到齊者亮紅燈並產生 Telegram 訊息；接近未到齊的實務上只進 log，不通知（避免洗版）。";
-}
-
-// 熱門/權值股籃子（id, 中文名）
-const BASKET = [
-  ["2330","台積電"],["2454","聯發科"],["2308","台達電"],["2303","聯電"],["3711","日月光投控"],
-  ["2379","瑞昱"],["3034","聯詠"],["2408","南亞科"],["3231","緯創"],["2382","廣達"],
-  ["2357","華碩"],["2356","英業達"],["2324","仁寶"],["3008","大立光"],["2474","可成"],
-  ["4938","和碩"],["6669","緯穎"],["3017","奇鋐"],["3037","欣興"],["2376","技嘉"],
-  ["2377","微星"],["2301","光寶科"],["2345","智邦"],["2327","國巨"],["6488","環球晶"],
-  ["8046","南電"],["4958","臻鼎-KY"],["6415","矽力-KY"],["1590","亞德客-KY"],["2059","川湖"],
-  ["2412","中華電"],["3045","台灣大"],["4904","遠傳"],["2881","富邦金"],["2882","國泰金"],
-  ["2891","中信金"],["2886","兆豐金"],["2884","玉山金"],["2885","元大金"],["2892","第一金"],
-  ["2880","華南金"],["2883","開發金"],["2890","永豐金"],["5880","合庫金"],["2887","台新金"],
-  ["5871","中租-KY"],["1301","台塑"],["1303","南亞"],["1326","台化"],["6505","台塑化"],
-  ["2002","中鋼"],["1101","台泥"],["2207","和泰車"],["2105","正新"],["9910","豐泰"],
-  ["1216","統一"],["2912","統一超"],["2603","長榮"],["2609","陽明"],["2615","萬海"],
-  ["2618","長榮航"],["2610","華航"],["2409","友達"],["3481","群創"],["2353","宏碁"],["9904","寶成"],
-];
-const NAME = Object.fromEntries(BASKET);
-
-// 抓一批股票的真實日線（CORS 已驗證可在瀏覽器直接抓）
-async function fetchUniverse(ids, onProgress) {
-  const token = $("#token").value.trim();
-  const end = new Date(), start = new Date(); start.setDate(start.getDate() - 320);
-  const fmt = d => d.toISOString().slice(0, 10);
-  const uni = {}; let done = 0;
-  for (const id of ids) {
-    try {
-      const u = new URL("https://api.finmindtrade.com/api/v4/data");
-      u.searchParams.set("dataset", "TaiwanStockPrice");
-      u.searchParams.set("data_id", id);
-      u.searchParams.set("start_date", fmt(start));
-      u.searchParams.set("end_date", fmt(end));
-      if (token) u.searchParams.set("token", token);
-      const r = await fetch(u); const j = await r.json();
-      if (j.data && j.data.length) {
-        const bars = j.data.map(d => ({ date: d.date, open: d.open, high: d.max, low: d.min, close: d.close, volume: d.Trading_Volume / 1000 }));
-        uni[id] = { name: NAME[id] || id, bars };
-      }
-    } catch (e) { /* 單檔失敗就略過 */ }
-    done++; if (onProgress) onProgress(done, ids.length);
-  }
   return uni;
 }
 
-async function fetchFinmind() {
-  const ids = $("#ids").value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-  if (!ids.length) { $("#status").textContent = "請先輸入股號，例如 2330,2454,2603"; return; }
-  $("#status").textContent = "抓取中…";
-  const uni = await fetchUniverse(ids, (d, t) => $("#status").textContent = `抓取中… ${d}/${t}`);
-  const n = Object.keys(uni).length;
-  if (!n) { $("#status").textContent = "沒抓到資料，請確認股號與 token。"; return; }
-  runScan(uni, `已用 FinMind 抓 ${n} 檔真實日線完成盤前選股。`);
+// ============================================================
+// ④ 主流程：每天盤前自動跑
+// ============================================================
+function runMorningScan() {
+  const dates = recentWeekdays_(HISTORY_WEEKDAYS);
+  const nameMap = fetchNameMap_();
+  const byStock = fetchWholeMarketByDates_(dates);
+  const universe = buildUniverse_(byStock, nameMap);
+  const watch = morningScan(universe);
+  const payload = { updated: new Date().toISOString(), scanned: Object.keys(universe).length, count: watch.length, items: watch };
+  PropertiesService.getScriptProperties().setProperty('watchlist', JSON.stringify(payload));
+  sendTelegramSummary_(watch, payload.scanned);
+  return payload;
 }
 
-async function scanBasket() {
-  $("#status").textContent = `掃描熱門股中… 0/${BASKET.length}（請稍候約 20–40 秒）`;
-  const uni = await fetchUniverse(BASKET.map(b => b[0]), (d, t) => $("#status").textContent = `掃描熱門股中… ${d}/${t}`);
-  const n = Object.keys(uni).length;
-  if (!n) { $("#status").innerHTML = "沒抓到資料。確認 token 是否正確、或 FinMind 額度是否用盡（每小時上限）。"; return; }
-  runScan(uni, `已用 FinMind 真實資料掃描 ${n} 檔權值/熱門股完成盤前選股。`);
+// ============================================================
+// ⑤ Telegram 推播
+// ============================================================
+function sendTelegram_(text) {
+  UrlFetchApp.fetch('https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/sendMessage', {
+    method: 'post', muteHttpExceptions: true,
+    payload: { chat_id: TELEGRAM_CHAT_ID, text: text, parse_mode: 'HTML' },
+  });
 }
 
-$("#btnScan").onclick = () => runScan(demoUniverse(), "已載入示範資料並完成盤前選股。");
-$("#btnMonitor").onclick = runMonitor;
-$("#btnFinmind").onclick = fetchFinmind;
-$("#btnBasket").onclick = scanBasket;
-runScan(demoUniverse(), "已載入示範資料並完成盤前選股。按「模擬盤中比對」看訊號觸發。");
-</script>
-</body>
-</html>
+function sendTelegramSummary_(watch, scanned) {
+  const icon = { squeeze: '⚡', trend: '🚀', oversold: '🔄', divergence: '📈' };
+  const nm = { squeeze: '波動率擠壓', trend: '強勢趨勢', oversold: '超跌反彈', divergence: 'AD背離' };
+  if (!watch.length) {
+    sendTelegram_('📋 今日盤前掃描完成：共掃 ' + scanned + ' 檔，<b>今天沒有符合條件的個股</b>（策略很挑，這正常）。');
+    return;
+  }
+  let msg = '📋 <b>今日盤前選股</b>（掃 ' + scanned + ' 檔，入選 ' + watch.length + '）\n\n';
+  ['trend', 'squeeze', 'oversold', 'divergence'].forEach(k => {
+    const list = watch.filter(w => w.strategy === k);
+    if (!list.length) return;
+    msg += icon[k] + ' <b>' + nm[k] + '</b>\n';
+    list.forEach(w => { msg += '  ' + w.stock_id + ' ' + w.name + ' — ' + w.note + '\n'; });
+    msg += '\n';
+  });
+  msg += '⚠️ 僅供參考，非投資建議。';
+  msg.match(/[\s\S]{1,3500}/g).forEach(part => sendTelegram_(part));   // 單則上限 4096 字，過長分段
+}
+
+// ============================================================
+// ⑥ 提供給網頁讀取（部署成 Web App 後，前端 fetch 這個 URL）
+// ============================================================
+function doGet() {
+  const data = PropertiesService.getScriptProperties().getProperty('watchlist') || '{"items":[]}';
+  return ContentService.createTextOutput(data).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================================
+// ⑦ 一次性設定小幫手（在編輯器手動選函式執行）
+// ============================================================
+function testTelegram() { sendTelegram_('✅ 測試成功：你的台股 agent 已連上 Telegram。'); }
+
+function setupDailyTrigger() {                  // 建立每天 08:00（台北）自動跑
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'runMorningScan') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('runMorningScan').timeBased().everyDays(1).atHour(8).inTimezone('Asia/Taipei').create();
+}
