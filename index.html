@@ -79,7 +79,7 @@
 <main>
   <p class="lead">
     這頁把「<b>盤前選股 → 盤中每輪比對 → 條件全到齊才示警</b>」的邏輯放進瀏覽器，全部在你電腦本機算，<b>不用安裝任何東西</b>。
-    三個策略：⚡ 波動率擠壓、🔄 超跌反彈、📈 AD 背離。預設用示範資料；填入 FinMind token 可改抓真實日線。
+    三個策略不夠？這版有四個：⚡ 波動率擠壓、🚀 強勢趨勢、🔄 超跌反彈、📈 AD 背離（前者順勢，後二逆勢）。預設用示範資料；填入 FinMind token 可改抓真實日線。
   </p>
 
   <div class="toolbar">
@@ -89,7 +89,7 @@
     <input class="fld" id="token" type="password" placeholder="FinMind token（選填）" style="width:200px">
     <input class="fld" id="ids" placeholder="股號 例 2330,2454,2603" style="width:210px">
     <button class="act ghost" id="btnFinmind">抓指定股號</button>
-    <button class="act" id="btnBasket">📡 掃描熱門股（真實·約66檔）</button>
+    <button class="act" id="btnBasket">📡 掃描熱門股（真實）</button>
   </div>
   <div class="hint" id="status"></div>
 
@@ -256,6 +256,39 @@ const Strategies = {
       ];
     },
   },
+
+  // 強勢趨勢（順勢/動能）：抓正在走多頭、逼近新高、相對強勢的主流股
+  //   盤前入選：多頭排列 + MA20 向上 + 逼近60日高 + 近60日明顯上漲
+  //   盤中觸發：再創高 ＋ 量增 ＋ 仍站上 MA20（全成立）
+  trend: {
+    name: "強勢趨勢", icon: "🚀", kind: "順勢/動能",
+    P: { MA_FAST: 20, MA_SLOW: 60, HIGH_LB: 60, NEAR_HIGH: 0.04, RISE_LB: 5, MOM_MIN: 0.08, VOL_MULT: 1.2 },
+    scan(bars) {
+      const P = this.P; if (bars.length < P.MA_SLOW + P.RISE_LB + 2) return null;
+      const closes = bars.map(b => b.close), i = bars.length - 1;
+      const ma20 = sma(closes, P.MA_FAST, i), ma60 = sma(closes, P.MA_SLOW, i);
+      const ma20Prev = sma(closes, P.MA_FAST, i - P.RISE_LB);
+      const high60 = Math.max(...bars.slice(-P.HIGH_LB).map(b => b.high));
+      const close = closes[i], mom = close / closes[i - P.MA_SLOW] - 1;
+      const ok = close > ma20 && ma20 > ma60 && ma20 > ma20Prev
+        && close >= high60 * (1 - P.NEAR_HIGH) && mom >= P.MOM_MIN;
+      if (!ok) return null;
+      const avgVol = sma(bars.map(b => b.volume), 20, i);
+      return {
+        levels: { new_high: +high60.toFixed(2), vol_threshold: Math.round(avgVol * P.VOL_MULT) },
+        note: `多頭排列、距60日高 ${((close / high60 - 1) * 100).toFixed(1)}%、近60日漲 ${(mom * 100).toFixed(0)}%`,
+      };
+    },
+    check(bars, snap, lv) {
+      const c = withLiveBar(bars, snap).map(b => b.close);
+      const ma20 = sma(c, this.P.MA_FAST, c.length - 1);
+      return [
+        ["再創新高", snap.price >= lv.new_high, `現 ${snap.price} vs 高 ${lv.new_high}`],
+        ["量能放大", snap.volume >= lv.vol_threshold, `量 ${snap.volume.toLocaleString()} vs ${lv.vol_threshold.toLocaleString()} 張`],
+        ["維持多頭(站上MA20)", snap.price > ma20, `MA20 ${ma20.toFixed(2)}`],
+      ];
+    },
+  },
 };
 
 // ---------- 盤前掃描整個 universe ----------
@@ -311,6 +344,11 @@ function makeRandom(seed) {                   // 無訊號雜訊股
   for (let i = 0; i < 160; i++) { p += (r() - 0.5) * 2; c.push(p); v.push(Math.round(1500 + r() * 2000)); }
   return toBars(c, v);
 }
+function makeTrend(seed) {                     // 強勢多頭趨勢、收在近高
+  const r = rngFactory(seed); let p = 100; const c = [], v = [];
+  for (let i = 0; i < 120; i++) { p = p * (1 + 0.004) + (r() - 0.5) * 0.8; c.push(p); v.push(Math.round(2200 + r() * 1600)); }
+  return toBars(c, v);
+}
 
 function demoUniverse() {
   return {
@@ -319,8 +357,9 @@ function demoUniverse() {
     "2603": { name: "長榮", bars: makeOversold(41) },
     "2609": { name: "陽明", bars: makeOversold(57) },
     "3008": { name: "大立光", bars: makeDivergence(69) },
+    "2382": { name: "廣達", bars: makeTrend(7) },
+    "2345": { name: "智邦", bars: makeTrend(15) },
     "2317": { name: "鴻海", bars: makeRandom(83) },
-    "2308": { name: "台達電", bars: makeRandom(97) },
   };
 }
 
@@ -328,7 +367,7 @@ function demoUniverse() {
 const $ = s => document.querySelector(s);
 let UNI = null, WATCH = [];
 
-const LBL = { breakout_price: "突破上軌價", vol_threshold: "量門檻(張)", vol_shrink_threshold: "量縮門檻(張)", low20: "20日低", rsi_ref: "前低RSI" };
+const LBL = { breakout_price: "突破上軌價", vol_threshold: "量門檻(張)", vol_shrink_threshold: "量縮門檻(張)", low20: "20日低", rsi_ref: "前低RSI", new_high: "60日高價" };
 const labelOf = k => LBL[k] || k;
 const fmtLv = (k, v) => k.includes("vol") ? Math.round(v).toLocaleString() : v;
 
