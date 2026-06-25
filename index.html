@@ -88,7 +88,8 @@
     <span style="width:1px;height:24px;background:var(--border)"></span>
     <input class="fld" id="token" type="password" placeholder="FinMind token（選填）" style="width:200px">
     <input class="fld" id="ids" placeholder="股號 例 2330,2454,2603" style="width:210px">
-    <button class="act ghost" id="btnFinmind">用 FinMind 抓真實資料</button>
+    <button class="act ghost" id="btnFinmind">抓指定股號</button>
+    <button class="act" id="btnBasket">📡 掃描熱門股（真實·約66檔）</button>
   </div>
   <div class="hint" id="status"></div>
 
@@ -333,7 +334,7 @@ const fmtLv = (k, v) => k.includes("vol") ? Math.round(v).toLocaleString() : v;
 
 function renderWatch() {
   const el = $("#watchlist");
-  if (!WATCH.length) { el.innerHTML = '<div class="empty">目前沒有符合條件的個股。換資料或調整參數再試。</div>'; $("#scanMeta").textContent = ""; return; }
+  if (!WATCH.length) { el.innerHTML = '<div class="empty">這批股票目前沒有人符合條件——選股策略本來就很挑，通常掃越多檔越容易中，也可能今天就是沒有好的設定。換批股票或改天再掃。</div>'; $("#scanMeta").textContent = ""; return; }
   $("#scanMeta").textContent = `共 ${WATCH.length} 檔入選`;
   el.innerHTML = WATCH.map((w, idx) => {
     const S = Strategies[w.strategy];
@@ -384,17 +385,32 @@ function runMonitor() {
   $("#status").textContent = "盤中比對完成：條件全到齊者亮紅燈並產生 Telegram 訊息；接近未到齊的實務上只進 log，不通知（避免洗版）。";
 }
 
-// FinMind 真實日線
-async function fetchFinmind() {
+// 熱門/權值股籃子（id, 中文名）
+const BASKET = [
+  ["2330","台積電"],["2454","聯發科"],["2308","台達電"],["2303","聯電"],["3711","日月光投控"],
+  ["2379","瑞昱"],["3034","聯詠"],["2408","南亞科"],["3231","緯創"],["2382","廣達"],
+  ["2357","華碩"],["2356","英業達"],["2324","仁寶"],["3008","大立光"],["2474","可成"],
+  ["4938","和碩"],["6669","緯穎"],["3017","奇鋐"],["3037","欣興"],["2376","技嘉"],
+  ["2377","微星"],["2301","光寶科"],["2345","智邦"],["2327","國巨"],["6488","環球晶"],
+  ["8046","南電"],["4958","臻鼎-KY"],["6415","矽力-KY"],["1590","亞德客-KY"],["2059","川湖"],
+  ["2412","中華電"],["3045","台灣大"],["4904","遠傳"],["2881","富邦金"],["2882","國泰金"],
+  ["2891","中信金"],["2886","兆豐金"],["2884","玉山金"],["2885","元大金"],["2892","第一金"],
+  ["2880","華南金"],["2883","開發金"],["2890","永豐金"],["5880","合庫金"],["2887","台新金"],
+  ["5871","中租-KY"],["1301","台塑"],["1303","南亞"],["1326","台化"],["6505","台塑化"],
+  ["2002","中鋼"],["1101","台泥"],["2207","和泰車"],["2105","正新"],["9910","豐泰"],
+  ["1216","統一"],["2912","統一超"],["2603","長榮"],["2609","陽明"],["2615","萬海"],
+  ["2618","長榮航"],["2610","華航"],["2409","友達"],["3481","群創"],["2353","宏碁"],["9904","寶成"],
+];
+const NAME = Object.fromEntries(BASKET);
+
+// 抓一批股票的真實日線（CORS 已驗證可在瀏覽器直接抓）
+async function fetchUniverse(ids, onProgress) {
   const token = $("#token").value.trim();
-  const ids = $("#ids").value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-  if (!ids.length) { $("#status").textContent = "請先輸入股號，例如 2330,2454,2603"; return; }
   const end = new Date(), start = new Date(); start.setDate(start.getDate() - 320);
   const fmt = d => d.toISOString().slice(0, 10);
-  $("#status").textContent = "抓取中…（FinMind 免費額度 600 次/小時）";
-  const uni = {};
-  try {
-    for (const id of ids) {
+  const uni = {}; let done = 0;
+  for (const id of ids) {
+    try {
       const u = new URL("https://api.finmindtrade.com/api/v4/data");
       u.searchParams.set("dataset", "TaiwanStockPrice");
       u.searchParams.set("data_id", id);
@@ -402,20 +418,38 @@ async function fetchFinmind() {
       u.searchParams.set("end_date", fmt(end));
       if (token) u.searchParams.set("token", token);
       const r = await fetch(u); const j = await r.json();
-      if (!j.data || !j.data.length) continue;
-      const bars = j.data.map(d => ({ date: d.date, open: d.open, high: d.max, low: d.min, close: d.close, volume: d.Trading_Volume / 1000 }));
-      uni[id] = { name: id, bars };
-    }
-    if (!Object.keys(uni).length) { $("#status").textContent = "沒抓到資料，請確認股號與額度。"; return; }
-    runScan(uni, `已用 FinMind 抓 ${Object.keys(uni).length} 檔真實日線。按「模擬盤中比對」看觸發。`);
-  } catch (e) {
-    $("#status").innerHTML = "瀏覽器直接打 FinMind 被擋（多半是 CORS）。可改用示範資料，或透過你自己的後端（FastAPI / Render）代理轉發後回傳給前端。";
+      if (j.data && j.data.length) {
+        const bars = j.data.map(d => ({ date: d.date, open: d.open, high: d.max, low: d.min, close: d.close, volume: d.Trading_Volume / 1000 }));
+        uni[id] = { name: NAME[id] || id, bars };
+      }
+    } catch (e) { /* 單檔失敗就略過 */ }
+    done++; if (onProgress) onProgress(done, ids.length);
   }
+  return uni;
+}
+
+async function fetchFinmind() {
+  const ids = $("#ids").value.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  if (!ids.length) { $("#status").textContent = "請先輸入股號，例如 2330,2454,2603"; return; }
+  $("#status").textContent = "抓取中…";
+  const uni = await fetchUniverse(ids, (d, t) => $("#status").textContent = `抓取中… ${d}/${t}`);
+  const n = Object.keys(uni).length;
+  if (!n) { $("#status").textContent = "沒抓到資料，請確認股號與 token。"; return; }
+  runScan(uni, `已用 FinMind 抓 ${n} 檔真實日線完成盤前選股。`);
+}
+
+async function scanBasket() {
+  $("#status").textContent = `掃描熱門股中… 0/${BASKET.length}（請稍候約 20–40 秒）`;
+  const uni = await fetchUniverse(BASKET.map(b => b[0]), (d, t) => $("#status").textContent = `掃描熱門股中… ${d}/${t}`);
+  const n = Object.keys(uni).length;
+  if (!n) { $("#status").innerHTML = "沒抓到資料。確認 token 是否正確、或 FinMind 額度是否用盡（每小時上限）。"; return; }
+  runScan(uni, `已用 FinMind 真實資料掃描 ${n} 檔權值/熱門股完成盤前選股。`);
 }
 
 $("#btnScan").onclick = () => runScan(demoUniverse(), "已載入示範資料並完成盤前選股。");
 $("#btnMonitor").onclick = runMonitor;
 $("#btnFinmind").onclick = fetchFinmind;
+$("#btnBasket").onclick = scanBasket;
 runScan(demoUniverse(), "已載入示範資料並完成盤前選股。按「模擬盤中比對」看訊號觸發。");
 </script>
 </body>
